@@ -1,0 +1,127 @@
+# Pharos Docker
+
+Docker Compose for a self-hosted Pharos mainnet RPC node.
+
+This is Pharos Docker v0.1.0
+
+## Overview
+
+This repo runs the official Pharos community image with the mainnet genesis,
+version metadata, and full-node config from `PharosNetwork/resources`.
+
+- HTTP RPC: `18100`
+- WebSocket RPC: `18200`
+- P2P TCP: `19000`
+- Pharos RPC: `20000`
+- Chain ID: `1672` (`0x688`)
+- Default reference RPC for sync checks: `https://rpc.pharos.xyz`
+
+The node requires a high open-file limit. Set the host kernel limit before
+starting the container if it is below `10000000`:
+
+```bash
+sudo sysctl -w fs.nr_open=10000000
+```
+
+Persist that setting with your host configuration management before production
+deployment.
+
+## Quick Start
+
+```bash
+cp default.env .env
+./pharosd up
+```
+
+On first startup, `./pharosd` downloads these files if they are missing:
+
+- `data/genesis.conf`
+- `data/bin/VERSION`
+- `data/pharos.conf`
+
+If `CONSENSUS_KEY_PWD` is blank in `.env`, `./pharosd up` generates a random
+local value and writes it back to `.env`.
+
+## Configuration
+
+Key `.env` values:
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `NODE_DOCKER_REPO` | `public.ecr.aws/k2g7b7g1/pharos` | Official image repository |
+| `NODE_DOCKER_TAG` | `pharos_community_v0.12.2_f301031a_0422` | Pinned image tag |
+| `DATA_DIR` | `./data` | Persistent node data |
+| `RPC_PORT` | `18100` | HTTP JSON-RPC |
+| `WS_PORT` | `18200` | WebSocket JSON-RPC |
+| `P2P_PORT` | `19000` | P2P TCP |
+| `PHAROS_RPC_PORT` | `20000` | Pharos RPC |
+| `PUBLIC_RPC` | `https://rpc.pharos.xyz` | Reference endpoint for `check-sync` |
+
+For production behind Traefik, use:
+
+```bash
+COMPOSE_FILE=pharos.yml:rpc-shared.yml:ext-network.yml
+DOMAIN=cryptomanufaktur.net
+RPC_HOST=pharos-a
+RPC_LB=pharos-lb
+WS_HOST=pharosws-a
+WS_LB=pharosws-lb
+```
+
+Use the host suffix appropriate for each node, for example `pharos-a` and
+`pharos-c`.
+
+## Commands
+
+```bash
+./pharosd up
+./pharosd down
+./pharosd logs -f pharos
+./pharosd version
+./pharosd check-sync
+```
+
+`ethd` remains the canonical wrapper. `pharosd` is a symlink to `ethd`.
+
+## Checking Sync
+
+```bash
+./pharosd check-sync
+```
+
+The sync checker:
+
+- Verifies local `eth_chainId` is `0x688`
+- Verifies the reference RPC also reports `0x688`
+- Compares latest block height and hash
+- Exits `0` when in sync, `1` when still syncing, and `2` on errors
+
+Override endpoints or threshold when needed:
+
+```bash
+./pharosd check-sync --local-rpc http://127.0.0.1:18100 --public-rpc https://rpc.pharos.xyz --block-lag 10
+```
+
+## Snapshot Restore
+
+The Pharos setup guide notes that the node must initialize first before a
+snapshot can be restored. Confirm `eth_blockNumber` returns a block number, stop
+the container, replace `./data/data/public` with the known-good snapshot
+`public` directory, then start the container again and re-run `check-sync`.
+
+For BCE-10126 testing, the known-good snapshot was:
+
+```text
+mainnet-snapshot-2026-04-28-06.tar.gz
+```
+
+## Verification
+
+```bash
+docker compose ps
+docker inspect pharos-pharos --format '{{.Config.Image}}'
+curl -sS -H 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+  http://127.0.0.1:18100
+./pharosd check-sync
+```

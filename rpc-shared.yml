@@ -1,0 +1,14 @@
+# =============================================================================
+# RPC Shared - Expose RPC ports to localhost
+# =============================================================================
+# Add :rpc-shared.yml to COMPOSE_FILE in .env to use this overlay.
+# Ports are bound to 127.0.0.1 by default for security.
+# Change to 0.0.0.0 if you need external access (not recommended).
+# =============================================================================
+
+services:
+  pharos:
+    ports:
+      - 127.0.0.1:${RPC_PORT:-18100}:18100
+      - 127.0.0.1:${WS_PORT:-18200}:18200
+      - 127.0.0.1:${PHAROS_RPC_PORT:-20000}:20000

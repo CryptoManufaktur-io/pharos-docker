@@ -1,0 +1,54 @@
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: 100m
+      max-file: "3"
+      tag: '{{.ImageName}}|{{.Name}}|{{.ImageFullID}}|{{.FullID}}'
+
+name: ${PROJECT_NAME:-pharos}
+
+services:
+  pharos:
+    image: ${NODE_DOCKER_REPO}:${NODE_DOCKER_TAG}
+    container_name: ${PROJECT_NAME}-pharos
+    restart: unless-stopped
+    stop_grace_period: 5m
+    environment:
+      - CONSENSUS_KEY_PWD=${CONSENSUS_KEY_PWD:?set CONSENSUS_KEY_PWD in .env}
+      - PHAROS_CONF=/data/pharos.conf
+      - GENESIS_CONF=/data/genesis.conf
+      - KEYS_DIR=/data/keys
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - ${P2P_PORT:-19000}:19000/tcp
+    ulimits:
+      nofile:
+        soft: 10000000
+        hard: 10000000
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - |
+          curl -fsS -H 'Content-Type: application/json' \
+            --data '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' \
+            http://127.0.0.1:18100 | grep -q '"result":"0x688"'
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.${RPC_HOST}.entrypoints=websecure
+      - traefik.http.routers.${RPC_HOST}.rule=Host(`${RPC_HOST}.${DOMAIN}`)
+      - traefik.http.routers.${RPC_HOST}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${RPC_HOST}.service=${RPC_LB}
+      - traefik.http.services.${RPC_LB}.loadbalancer.server.port=${RPC_PORT:-18100}
+      - traefik.http.routers.${WS_HOST}.entrypoints=websecure
+      - traefik.http.routers.${WS_HOST}.rule=Host(`${WS_HOST}.${DOMAIN}`)
+      - traefik.http.routers.${WS_HOST}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${WS_HOST}.service=${WS_LB}
+      - traefik.http.services.${WS_LB}.loadbalancer.server.port=${WS_PORT:-18200}
+    <<: *logging
