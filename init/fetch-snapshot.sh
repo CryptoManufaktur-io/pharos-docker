@@ -16,16 +16,18 @@ if [[ ! -f /data/.initialized ]]; then
     # chmod +x /data/bin/*
     # LD_PRELOAD=/data/bin/libevmone.so CONSENSUS_KEY_PWD="$CONSENSUS_KEY_PWD" PORTAL_SSL_PWD="$PORTAL_SSL_PWD" /data/bin/pharos_cli genesis -c /data/pharos.conf -g /data/genesis.conf
 
-    # Download snapshot
-    mkdir -p /data/snapshot
-    cd /data/snapshot
-    aria2c -c -x6 -s6 --auto-file-renaming=false --conditional-get=true --allow-overwrite=true -o snapshot.tar.gz "${SNAPSHOT}"
+    if [ -n "${SNAPSHOT}" ]; then
+        # Download snapshot
+        mkdir -p /data/snapshot
+        cd /data/snapshot
+        aria2c -c -x6 -s6 --auto-file-renaming=false --conditional-get=true --allow-overwrite=true -o snapshot.tar.gz "${SNAPSHOT}"
 
-    # Extract 
-    tar -zxvf snapshot.tar.gz
-    rm snapshot.tar.gz
-    mkdir -p /data/data
-    mv public/ /data/data
+        # Extract 
+        tar -zxvf snapshot.tar.gz
+        rm snapshot.tar.gz
+        mkdir -p /data/data
+        mv public/ /data/data
+    fi
 
     touch /data/.initialized
     echo "Initialize complete"
