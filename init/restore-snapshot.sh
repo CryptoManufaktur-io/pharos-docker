@@ -3,10 +3,29 @@ set -euo pipefail
 
 DATA_DIR="${DATA_DIR:-/data}"
 SNAPSHOT="${SNAPSHOT:-}"
+SNAPSHOT_SHA256="${SNAPSHOT_SHA256:-}"
 MARKER="${DATA_DIR}/.snapshot-restored"
 DOWNLOAD_DIR="${DATA_DIR}/snapshot"
 EXTRACT_DIR="${DATA_DIR}/.snapshot-extract"
 PUBLIC_DIR="${DATA_DIR}/data/public"
+backup_dir=""
+restore_in_progress=0
+
+rollback_restore() {
+  local exit_code=$?
+
+  if [ "${restore_in_progress}" -eq 1 ]; then
+    echo "Snapshot restore failed. Rolling back ${PUBLIC_DIR}."
+    rm -rf "${PUBLIC_DIR}"
+    if [ -n "${backup_dir}" ] && [ -d "${backup_dir}" ]; then
+      mv "${backup_dir}" "${PUBLIC_DIR}"
+    fi
+  fi
+
+  exit "${exit_code}"
+}
+
+trap rollback_restore ERR
 
 if [ -z "${SNAPSHOT}" ]; then
   echo "No snapshot URL defined."
@@ -47,6 +66,17 @@ aria2c \
   -o "${archive_name}" \
   "${SNAPSHOT}"
 
+if [ -n "${SNAPSHOT_SHA256}" ]; then
+  echo "Verifying snapshot checksum."
+  actual_sha256="$(sha256sum "${archive_path}" | awk '{print $1}')"
+  if [ "${actual_sha256}" != "${SNAPSHOT_SHA256}" ]; then
+    echo "Snapshot checksum mismatch."
+    echo "Expected: ${SNAPSHOT_SHA256}"
+    echo "Actual:   ${actual_sha256}"
+    exit 1
+  fi
+fi
+
 echo "Extracting ${archive_path}"
 case "${archive_name}" in
   *.tar.gz|*.tgz)
@@ -72,13 +102,27 @@ if [ -z "${snapshot_public:-}" ] || [ ! -d "${snapshot_public}" ]; then
   exit 1
 fi
 
+if [ -z "$(find "${snapshot_public}" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo "Snapshot public directory is empty."
+  exit 1
+fi
+
 backup_dir="${PUBLIC_DIR}.bak.$(date +%Y%m%d%H%M%S)"
 echo "Backing up existing public data to ${backup_dir}"
+restore_in_progress=1
 mv "${PUBLIC_DIR}" "${backup_dir}"
 
 echo "Installing snapshot public data to ${PUBLIC_DIR}"
 mkdir -p "$(dirname "${PUBLIC_DIR}")"
 mv "${snapshot_public}" "${PUBLIC_DIR}"
+
+if [ -z "$(find "${PUBLIC_DIR}" -mindepth 1 -maxdepth 1 -print -quit)" ]; then
+  echo "Restored public directory is empty."
+  exit 1
+fi
+
+restore_in_progress=0
+trap - ERR
 
 rm -rf "${EXTRACT_DIR}" "${archive_path}"
 touch "${MARKER}"

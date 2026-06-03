@@ -19,6 +19,7 @@ services:
     restart: "no"
     environment:
       - SNAPSHOT=${SNAPSHOT:-}
+      - SNAPSHOT_SHA256=${SNAPSHOT_SHA256:-}
       - DATA_DIR=/data
     volumes:
       - ${DATA_DIR:-./data}:/data

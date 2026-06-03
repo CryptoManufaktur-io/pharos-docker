@@ -51,7 +51,8 @@ Key `.env` values:
 | `NODE_DOCKER_REPO` | `public.ecr.aws/k2g7b7g1/pharos` | Official image repository |
 | `NODE_DOCKER_TAG` | `pharos_community_v0.12.2_f301031a_0422` | Pinned image tag |
 | `DATA_DIR` | `./data` | Persistent node data |
-| `SNAPSHOT` | `https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-04-28-06.tar.gz` | Initial public DB snapshot |
+| `SNAPSHOT` | empty | Optional initial public DB snapshot |
+| `SNAPSHOT_SHA256` | empty | Optional snapshot archive SHA-256 checksum |
 | `SNAPSHOT_INIT_TIMEOUT` | `300` | Seconds to wait for first boot initialization |
 | `RPC_PORT` | `18100` | HTTP JSON-RPC |
 | `WS_PORT` | `18200` | WebSocket JSON-RPC |
@@ -107,8 +108,8 @@ Override endpoints or threshold when needed:
 
 ## Snapshot Restore
 
-`./pharosd up` restores `SNAPSHOT` automatically on first start when
-`${DATA_DIR}/.snapshot-restored` is absent.
+Set `SNAPSHOT` before first start to restore an initial public DB snapshot.
+Leaving `SNAPSHOT=` starts from genesis and disables snapshot restore.
 
 Pharos must initialize its data layout before the snapshot can replace
 `${DATA_DIR}/data/public`, so the wrapper does this sequence:
@@ -120,6 +121,15 @@ Pharos must initialize its data layout before the snapshot can replace
 5. Replace `${DATA_DIR}/data/public` and write `${DATA_DIR}/.snapshot-restored`.
 6. Start `pharos` normally.
 
+If `${DATA_DIR}/data/public` already exists without
+`${DATA_DIR}/.snapshot-init-ready`, `./pharosd up` refuses to restore
+automatically. Start from a clean `DATA_DIR` for snapshot restore. Set
+`SNAPSHOT=` to keep existing data and start normally.
+
+Set `SNAPSHOT_SHA256` when a checksum is available. If set, the init container
+verifies the archive before extraction. If the replacement fails, the previous
+`public` directory is moved back before the script exits.
+
 The restore runs in a screen-backed startup path like other snapshot-backed
 `*-docker` repos. Follow progress with:
 
@@ -127,19 +137,13 @@ The restore runs in a screen-backed startup path like other snapshot-backed
 ./pharosd init-logs -f
 ```
 
-To start from genesis instead, set:
+To use the BCE-10126 known-good snapshot:
 
 ```bash
-SNAPSHOT=
+SNAPSHOT=https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-04-28-06.tar.gz
 ```
 
 To restore again, stop the node and remove `${DATA_DIR}/.snapshot-restored`.
-
-For BCE-10126 testing, the known-good snapshot was:
-
-```text
-https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-04-28-06.tar.gz
-```
 
 ## Verification
 

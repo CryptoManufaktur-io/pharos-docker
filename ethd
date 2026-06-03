@@ -2,12 +2,7 @@
 set -Eeuo pipefail
 
 # =============================================================================
-# SKELETON X-DOCKER - Template CLI Script
-# =============================================================================
-# Replace these placeholder values for your protocol:
-#   __project_name - Human-readable project name (e.g., "Optimism Docker")
-#   __app_name     - Human-readable app name (e.g., "Optimism node")
-#   __sample_service - Example service name for help text (e.g., "op-node")
+# PHAROS DOCKER - CLI Script
 # =============================================================================
 
 __project_name="Pharos Docker"
@@ -105,6 +100,19 @@ __get_value_with_default() {
 }
 
 
+__get_value_with_default_preserve_empty() {
+  local __var_name="$1"
+  local __output_var="$2"
+  local __value
+
+  __get_value_from_env "${__var_name}" "${__env_file}" "__value"
+  if [ "${__found}" -eq 0 ]; then
+    __get_value_from_env "${__var_name}" "default.env" "__value"
+  fi
+  printf -v "${__output_var}" '%s' "${__value}"
+}
+
+
 __get_data_dir() {
   local __output_var="$1"
   local __data_dir
@@ -176,7 +184,7 @@ __ensure_consensus_password() {
 __snapshot_url() {
   local __snapshot
 
-  __get_value_with_default "SNAPSHOT" "__snapshot"
+  __get_value_with_default_preserve_empty "SNAPSHOT" "__snapshot"
   printf '%s' "${__snapshot}"
 }
 
@@ -186,6 +194,14 @@ __snapshot_marker() {
 
   __get_data_dir "__data_dir"
   printf '%s/.snapshot-restored' "${__data_dir}"
+}
+
+
+__snapshot_init_marker() {
+  local __data_dir
+
+  __get_data_dir "__data_dir"
+  printf '%s/.snapshot-init-ready' "${__data_dir}"
 }
 
 
@@ -250,6 +266,7 @@ __wait_for_pharos_init() {
 __bootstrap_snapshot_if_needed() {
   local __snapshot
   local __marker
+  local __init_marker
   local __public_dir
 
   __snapshot="$(__snapshot_url)"
@@ -258,6 +275,7 @@ __bootstrap_snapshot_if_needed() {
   fi
 
   __marker="$(__snapshot_marker)"
+  __init_marker="$(__snapshot_init_marker)"
   __public_dir="$(__pharos_public_dir)"
 
   if __snapshot_restored; then
@@ -265,10 +283,18 @@ __bootstrap_snapshot_if_needed() {
     return 0
   fi
 
-  if [ ! -d "${__public_dir}" ]; then
+  if [ -d "${__public_dir}" ] && [ ! -f "${__init_marker}" ]; then
+    echo "Refusing automatic snapshot restore because ${__public_dir} already exists."
+    echo "To restore from snapshot, start from a clean DATA_DIR."
+    echo "To keep existing data and start normally, set SNAPSHOT= in ${__env_file}."
+    exit 1
+  fi
+
+  if [ ! -f "${__init_marker}" ]; then
     echo "SNAPSHOT is set. Starting Pharos once to initialize the data directory."
     __docompose up -d --remove-orphans pharos
     __wait_for_pharos_init
+    ${__as_owner} touch "${__init_marker}"
   elif __pharos_container_running; then
     echo "Stopping Pharos before snapshot restore."
   fi
@@ -279,6 +305,7 @@ __bootstrap_snapshot_if_needed() {
 
   echo "Restoring Pharos snapshot with pharos-snapshot-init."
   __docompose --profile snapshot run --rm --no-deps pharos-snapshot-init
+  ${__as_owner} rm -f "${__init_marker}"
 }
 
 
@@ -305,7 +332,7 @@ start() {
   echo "Running \"docker compose up -d\" in screen because of the snapshot init container."
   echo
   echo "If this is your first start and you are getting a SNAPSHOT, you can view the init logs:"
-  echo "\"${__me} logs -f pharos-snapshot-init\""
+  echo "\"${__me} init-logs -f\""
   echo
   echo "You can attach to the screen session with \"screen -r ${__screen_id}-compose-session\""
   echo
