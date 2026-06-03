@@ -12,7 +12,7 @@ if [[ ! -f /data/.initialized ]]; then
     wget -O /data/pharos.conf "${PHAROS_CONF_URL}"
 
     # Bootstrap the node
-    pharos_cli genesis -c "$PHAROS_CONF" -g "$GENESIS_CONF"
+    pharos_cli genesis -c /data/pharos.conf -g /data/genesis.conf
 
     # Download snapshot
     mkdir -p /data/snapshot
@@ -23,6 +23,8 @@ if [[ ! -f /data/.initialized ]]; then
     tar -zxvf snapshot.tar.gz
     mv /data/data/public /data/data/public_bak
     mv public/ /data/data
+
+    touch /data/.initialized
     echo "Initialize complete"
 else
     echo "No need to initialize"
