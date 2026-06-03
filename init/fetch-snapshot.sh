@@ -24,7 +24,8 @@ if [[ ! -f /data/.initialized ]]; then
 
     # Extract 
     tar -zxvf snapshot.tar.gz
-    mv /data/data/public /data/data/public_bak
+    rm snapshot.tar.gz
+    mkdir -p /data/data
     mv public/ /data/data
 
     touch /data/.initialized
