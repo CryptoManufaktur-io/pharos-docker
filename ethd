@@ -115,10 +115,10 @@ __get_value_with_default_preserve_empty() {
 
 __get_data_dir() {
   local __output_var="$1"
-  local __data_dir
+  local __resolved_data_dir
 
-  __get_value_with_default "DATA_DIR" "__data_dir"
-  printf -v "${__output_var}" '%s' "${__data_dir:-./data}"
+  __get_value_with_default "DATA_DIR" "__resolved_data_dir"
+  printf -v "${__output_var}" '%s' "${__resolved_data_dir:-./data}"
 }
 
 
