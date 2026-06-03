@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-__project_name="MegaETH Docker"
-__app_name="megaeth"
-__sample_service="megaeth"
+__project_name="pharos Docker"
+__app_name="pharos"
+__sample_service="pharos"
 __docker_exe="docker"
 __old_docker=0
 __docker_sudo=""
@@ -57,7 +57,7 @@ version() {
 # Multiple clients are in multiple case statements. Mutually exclusive clients are in one case statement
 # Avoid the use of ;;&
   case "${__value}" in
-    *x.yml* )
+    *pharos.yml* )
       __docompose exec x-geth x-geth version
       ;;
   esac
