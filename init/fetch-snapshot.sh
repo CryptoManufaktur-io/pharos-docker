@@ -6,7 +6,6 @@ if [[ ! -f /data/.initialized ]]; then
 
     # Mainnet genesis and version
     wget -O /data/genesis.conf "${GENESIS_URL}"
-    wget -O /data/bin/VERSION "${VERSION_URL}"
 
     # Archive/full node config (pruning disabled by default)
     wget -O /data/pharos.conf "${PHAROS_CONF_URL}"
@@ -33,3 +32,5 @@ if [[ ! -f /data/.initialized ]]; then
 else
     echo "No need to initialize"
 fi
+
+wget -O /data/bin/VERSION "${VERSION_URL}"
