@@ -12,7 +12,10 @@ if [[ ! -f /data/.initialized ]]; then
     wget -O /data/pharos.conf "${PHAROS_CONF_URL}"
 
     # Bootstrap the node
-    pharos_cli genesis -c /data/pharos.conf -g /data/genesis.conf
+    rm -rf /data/bin
+    cp -r /app/bin /data/bin
+    chmod +x /data/bin/*
+    /data/bin/pharos_cli genesis -c /data/pharos.conf -g /data/genesis.conf
 
     # Download snapshot
     mkdir -p /data/snapshot
