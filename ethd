@@ -66,7 +66,7 @@ version() {
 
 __prep_conffiles() {
   case "${__command:-}" in
-    up|start|run|restart|update|upgrade) ;;
+    up|start|run|restart|compose_up|update|upgrade) ;;
     *) return 0 ;;
   esac
 
@@ -77,15 +77,17 @@ __prep_conffiles() {
   local __genesis_url
   local __version_url
   local __pharos_conf_url
+  local __data_dir
 
   __get_value_with_default "GENESIS_URL" "__genesis_url"
   __get_value_with_default "VERSION_URL" "__version_url"
   __get_value_with_default "PHAROS_CONF_URL" "__pharos_conf_url"
+  __get_data_dir "__data_dir"
 
-  ${__as_owner} mkdir -p data/bin data/keys
-  __fetch_conffile "${__genesis_url}" "data/genesis.conf"
-  __fetch_conffile "${__version_url}" "data/bin/VERSION"
-  __fetch_conffile "${__pharos_conf_url}" "data/pharos.conf"
+  ${__as_owner} mkdir -p "${__data_dir}/bin" "${__data_dir}/keys"
+  __fetch_conffile "${__genesis_url}" "${__data_dir}/genesis.conf"
+  __fetch_conffile "${__version_url}" "${__data_dir}/bin/VERSION"
+  __fetch_conffile "${__pharos_conf_url}" "${__data_dir}/pharos.conf"
   __ensure_consensus_password
 }
 
@@ -100,6 +102,15 @@ __get_value_with_default() {
     __get_value_from_env "${__var_name}" "default.env" "__value"
   fi
   printf -v "${__output_var}" '%s' "${__value}"
+}
+
+
+__get_data_dir() {
+  local __output_var="$1"
+  local __data_dir
+
+  __get_value_with_default "DATA_DIR" "__data_dir"
+  printf -v "${__output_var}" '%s' "${__data_dir:-./data}"
 }
 
 
@@ -162,16 +173,152 @@ __ensure_consensus_password() {
 }
 
 
-start() {
-# Start the node - customize if you need screen-based startup
-# Default: Simple docker compose up
+__snapshot_url() {
+  local __snapshot
+
+  __get_value_with_default "SNAPSHOT" "__snapshot"
+  printf '%s' "${__snapshot}"
+}
+
+
+__snapshot_marker() {
+  local __data_dir
+
+  __get_data_dir "__data_dir"
+  printf '%s/.snapshot-restored' "${__data_dir}"
+}
+
+
+__pharos_public_dir() {
+  local __data_dir
+
+  __get_data_dir "__data_dir"
+  printf '%s/data/public' "${__data_dir}"
+}
+
+
+__snapshot_restored() {
+  local __marker
+
+  __marker="$(__snapshot_marker)"
+  [ -f "${__marker}" ]
+}
+
+
+__pharos_container_running() {
+  local __cid
+
+  __cid="$(__docompose ps -q pharos 2>/dev/null | head -n 1 || true)"
+  [ -n "${__cid}" ] || return 1
+  [ "$(__dodocker inspect -f '{{.State.Running}}' "${__cid}" 2>/dev/null || true)" = "true" ]
+}
+
+
+__wait_for_pharos_init() {
+  local __timeout
+  local __start_time
+  local __cid
+
+  __get_value_with_default "SNAPSHOT_INIT_TIMEOUT" "__timeout"
+  if ! [[ "${__timeout}" =~ ^[0-9]+$ ]]; then
+    echo "SNAPSHOT_INIT_TIMEOUT must be a non-negative integer."
+    exit 1
+  fi
+
+  __start_time="$(date +%s)"
+  echo "Waiting up to ${__timeout}s for Pharos to initialize and answer eth_blockNumber"
+
+  while true; do
+    __cid="$(__docompose ps -q pharos 2>/dev/null | head -n 1 || true)"
+    if [ -n "${__cid}" ] \
+        && __dodocker exec "${__cid}" sh -c 'curl -fsS -H "Content-Type: application/json" --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}" http://127.0.0.1:18100 | grep -Eq "\"result\":\"0x[0-9a-fA-F]+\""' >/dev/null 2>&1; then
+      echo "Pharos initialization RPC is ready."
+      return 0
+    fi
+
+    if [ $(( "$(date +%s)" - __start_time )) -ge "${__timeout}" ]; then
+      echo "Timed out waiting for Pharos initialization RPC."
+      echo "Check logs with: ${__me} logs -f pharos"
+      exit 1
+    fi
+
+    sleep 5
+  done
+}
+
+
+__bootstrap_snapshot_if_needed() {
+  local __snapshot
+  local __marker
+  local __public_dir
+
+  __snapshot="$(__snapshot_url)"
+  if [ -z "${__snapshot}" ]; then
+    return 0
+  fi
+
+  __marker="$(__snapshot_marker)"
+  __public_dir="$(__pharos_public_dir)"
+
+  if __snapshot_restored; then
+    echo "Snapshot already restored. Remove ${__marker} to restore again."
+    return 0
+  fi
+
+  if [ ! -d "${__public_dir}" ]; then
+    echo "SNAPSHOT is set. Starting Pharos once to initialize the data directory."
+    __docompose up -d --remove-orphans pharos
+    __wait_for_pharos_init
+  elif __pharos_container_running; then
+    echo "Stopping Pharos before snapshot restore."
+  fi
+
+  if __pharos_container_running; then
+    __docompose stop pharos
+  fi
+
+  echo "Restoring Pharos snapshot with pharos-snapshot-init."
+  __docompose --profile snapshot run --rm --no-deps pharos-snapshot-init
+}
+
+
+compose_up() {
+  __bootstrap_snapshot_if_needed
   __docompose up -d --remove-orphans "$@"
-# Screen-based example for long init:
-#   if screen -list | grep -q "\.${__project_name%%[[:space:]]*}-init"; then
-#     echo "Init screen session already running"
-#     return 0
-#   fi
-#   screen -dmS "${__project_name%%[[:space:]]*}-init" __docompose up -d --remove-orphans "$@"
+}
+
+
+start() {
+  local __screen_id
+  local __screen_log
+
+  if ! type -P screen >/dev/null 2>&1; then
+    ${__auto_sudo} apt-get update && ${__auto_sudo} apt-get install -y screen
+  fi
+
+  __get_value_with_default "PROJECT_NAME" "__screen_id"
+  __screen_id="${__screen_id:-pharos}"
+  __screen_log="/tmp/${__screen_id}-compose-screen.log"
+  rm -f "${__screen_log}"
+
+  screen -dmS "${__screen_id}-compose-session" -L -Logfile "${__screen_log}" "${BASH_SOURCE[0]}" compose_up "$@"
+  echo "Running \"docker compose up -d\" in screen because of the snapshot init container."
+  echo
+  echo "If this is your first start and you are getting a SNAPSHOT, you can view the init logs:"
+  echo "\"${__me} logs -f pharos-snapshot-init\""
+  echo
+  echo "You can attach to the screen session with \"screen -r ${__screen_id}-compose-session\""
+  echo
+  echo "Waiting 5 seconds"
+  sleep 5
+  echo
+  echo "Here's the output of docker compose so far:"
+  if [ -f "${__screen_log}" ]; then
+    cat "${__screen_log}"
+  else
+    echo "No screen output yet."
+  fi
+  echo
 }
 
 
@@ -1092,6 +1239,11 @@ logs() {
 }
 
 
+init_logs() {
+  __docompose logs --tail="${TAIL:-200}" pharos-snapshot-init "$@"
+}
+
+
 check_sync() {
   ./scripts/check_sync.sh "$@"
 }
@@ -1210,6 +1362,8 @@ __full_help() {
   echo "    prints the version(s) of currently running client(s)"
   echo "  logs"
   echo "    shows logs"
+  echo "  init-logs"
+  echo "    shows snapshot/init logs"
   echo "  check-sync"
   echo "    compare local node status to a public RPC to verify sync"
   echo "  cmd <command>"
@@ -1284,17 +1438,17 @@ if [ "$__command" = "install" ]; then
   exit "$?"
 fi
 
+if [ "$__command" = "check-sync" ]; then
+  trap - ERR EXIT
+  check_sync "$@"
+  exit "$?"
+fi
+
 if [ ! -f ".env" ] && [ "$__command" != "update" ]; then
   echo "No .env file found. Copy the default configuration:"
   echo "  cp default.env .env"
   echo "Then edit .env to customize your deployment."
   exit 1
-fi
-
-if [ "$__command" = "check-sync" ]; then
-  trap - ERR EXIT
-  check_sync "$@"
-  exit "$?"
 fi
 
 __handle_docker
@@ -1332,8 +1486,10 @@ if ! __docompose --help >/dev/null 2>&1; then
 fi
 
 case "$__command" in
-  help|update|upgrade|run|up|start|down|stop|restart|version|logs|cmd|terminate|space)
+  help|update|upgrade|run|up|start|compose_up|down|stop|restart|version|logs|cmd|terminate|space)
     $__command "$@";;
+  init-logs)
+    init_logs "$@";;
   *)
     echo "Unrecognized command $__command"
     help

@@ -10,6 +10,8 @@ pre-commit run --all-files
 ./pharosd help
 ./pharosd -h
 cp default.env .env && ./pharosd check-sync
+shellcheck -x init/restore-snapshot.sh
+docker compose --env-file default.env --profile snapshot config
 ```
 
 The last command is expected to fail with a local RPC error if the node is not
@@ -21,6 +23,9 @@ running. It should not fail from env parsing or missing defaults.
 - Keep Pharos mainnet chain ID set to `0x688`.
 - Keep `ethd` as the canonical wrapper and `pharosd` as the convenience symlink.
 - `./pharosd up` must fetch `genesis.conf`, `bin/VERSION`, and `pharos.conf` if missing.
+- `SNAPSHOT` restore must use `pharos-snapshot-init` and `aria2c`.
+- `./pharosd up` must initialize Pharos before replacing `${DATA_DIR}/data/public`.
+- Keep long snapshot restore work in the screen-backed startup path.
 - `CONSENSUS_KEY_PWD` must not stay blank at container startup.
 - Preserve the `nofile` ulimit of `10000000`.
 - Do not commit `.env`, `data/`, snapshots, generated keys, or restored chain data.

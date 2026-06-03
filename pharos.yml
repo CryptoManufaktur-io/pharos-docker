@@ -9,6 +9,21 @@ x-logging: &logging
 name: ${PROJECT_NAME:-pharos}
 
 services:
+  pharos-snapshot-init:
+    profiles: ["snapshot"]
+    build:
+      context: ./init
+      dockerfile: Dockerfile
+    image: init:pharos
+    pull_policy: never
+    restart: "no"
+    environment:
+      - SNAPSHOT=${SNAPSHOT:-}
+      - DATA_DIR=/data
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - /etc/localtime:/etc/localtime:ro
+
   pharos:
     image: ${NODE_DOCKER_REPO}:${NODE_DOCKER_TAG}
     container_name: ${PROJECT_NAME}-pharos

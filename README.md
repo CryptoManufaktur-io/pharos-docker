@@ -51,6 +51,8 @@ Key `.env` values:
 | `NODE_DOCKER_REPO` | `public.ecr.aws/k2g7b7g1/pharos` | Official image repository |
 | `NODE_DOCKER_TAG` | `pharos_community_v0.12.2_f301031a_0422` | Pinned image tag |
 | `DATA_DIR` | `./data` | Persistent node data |
+| `SNAPSHOT` | `https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-04-28-06.tar.gz` | Initial public DB snapshot |
+| `SNAPSHOT_INIT_TIMEOUT` | `300` | Seconds to wait for first boot initialization |
 | `RPC_PORT` | `18100` | HTTP JSON-RPC |
 | `WS_PORT` | `18200` | WebSocket JSON-RPC |
 | `P2P_PORT` | `19000` | P2P TCP |
@@ -77,6 +79,7 @@ Use the host suffix appropriate for each node, for example `pharos-a` and
 ./pharosd up
 ./pharosd down
 ./pharosd logs -f pharos
+./pharosd init-logs -f
 ./pharosd version
 ./pharosd check-sync
 ```
@@ -104,15 +107,38 @@ Override endpoints or threshold when needed:
 
 ## Snapshot Restore
 
-The Pharos setup guide notes that the node must initialize first before a
-snapshot can be restored. Confirm `eth_blockNumber` returns a block number, stop
-the container, replace `./data/data/public` with the known-good snapshot
-`public` directory, then start the container again and re-run `check-sync`.
+`./pharosd up` restores `SNAPSHOT` automatically on first start when
+`${DATA_DIR}/.snapshot-restored` is absent.
+
+Pharos must initialize its data layout before the snapshot can replace
+`${DATA_DIR}/data/public`, so the wrapper does this sequence:
+
+1. Start `pharos` once.
+2. Wait until `eth_blockNumber` returns a block number.
+3. Stop `pharos`.
+4. Run `pharos-snapshot-init`, which downloads the snapshot with `aria2c`.
+5. Replace `${DATA_DIR}/data/public` and write `${DATA_DIR}/.snapshot-restored`.
+6. Start `pharos` normally.
+
+The restore runs in a screen-backed startup path like other snapshot-backed
+`*-docker` repos. Follow progress with:
+
+```bash
+./pharosd init-logs -f
+```
+
+To start from genesis instead, set:
+
+```bash
+SNAPSHOT=
+```
+
+To restore again, stop the node and remove `${DATA_DIR}/.snapshot-restored`.
 
 For BCE-10126 testing, the known-good snapshot was:
 
 ```text
-mainnet-snapshot-2026-04-28-06.tar.gz
+https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-04-28-06.tar.gz
 ```
 
 ## Verification
