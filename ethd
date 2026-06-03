@@ -1274,6 +1274,15 @@ init_logs() {
 }
 
 
+prune_logs() {
+  local __log_prune_container
+
+  __get_value_with_default "PROJECT_NAME" "__log_prune_container"
+  __log_prune_container="${__log_prune_container:-pharos}-pharos-log-prune"
+  __docompose run --rm --no-deps -T --name "${__log_prune_container}" pharos-log-pruner --once
+}
+
+
 check_sync() {
   ./scripts/check_sync.sh "$@"
 }
@@ -1394,6 +1403,8 @@ __full_help() {
   echo "    shows logs"
   echo "  init-logs"
   echo "    shows snapshot/init logs"
+  echo "  prune-logs"
+  echo "    prunes rotated Pharos runtime logs under DATA_DIR/log"
   echo "  check-sync"
   echo "    compare local node status to a public RPC to verify sync"
   echo "  cmd <command>"
@@ -1520,6 +1531,8 @@ case "$__command" in
     $__command "$@";;
   init-logs)
     init_logs "$@";;
+  prune-logs)
+    prune_logs "$@";;
   *)
     echo "Unrecognized command $__command"
     help

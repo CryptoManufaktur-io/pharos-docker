@@ -9,6 +9,23 @@ x-logging: &logging
 name: ${PROJECT_NAME:-pharos}
 
 services:
+  pharos-log-pruner:
+    image: ${NODE_DOCKER_REPO}:${NODE_DOCKER_TAG}
+    container_name: ${PROJECT_NAME}-pharos-log-pruner
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - /usr/local/bin/prune-pharos-logs.sh
+    environment:
+      - LOG_DIR=/data/log
+      - LOG_ROTATION_KEEP=${LOG_ROTATION_KEEP:-10}
+      - LOG_PRUNE_INTERVAL=${LOG_PRUNE_INTERVAL:-3600}
+    volumes:
+      - ${DATA_DIR:-./data}:/data
+      - ./scripts/prune_pharos_logs.sh:/usr/local/bin/prune-pharos-logs.sh:ro
+      - /etc/localtime:/etc/localtime:ro
+    <<: *logging
+
   pharos-snapshot-init:
     profiles: ["snapshot"]
     build:

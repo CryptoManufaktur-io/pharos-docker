@@ -9,13 +9,14 @@ See CONTRIBUTING.md for contribution expectations.
 - `pharos.yml` defines `pharos` and `pharos-snapshot-init`.
 - `rpc-shared.yml` and `ext-network.yml` add RPC and Traefik exposure.
 - `scripts/check_sync.sh` is the EVM JSON-RPC sync checker.
+- `scripts/prune_pharos_logs.sh` caps rotated Pharos runtime logs under `DATA_DIR/log`.
 - `init/restore-snapshot.sh` is the snapshot restore entrypoint.
 
 ## Build & Validation
 
 ```bash
 shellcheck -x ethd scripts/check_sync.sh
-shellcheck -x init/restore-snapshot.sh
+shellcheck -x scripts/prune_pharos_logs.sh init/restore-snapshot.sh
 pre-commit run --all-files
 ./pharosd help
 ./pharosd -h
@@ -45,4 +46,5 @@ CONSENSUS_KEY_PWD=test docker compose --env-file default.env --profile snapshot 
 - Keep long snapshot restore work in the screen-backed startup path.
 - `CONSENSUS_KEY_PWD` must not stay blank at container startup.
 - Preserve the `nofile` ulimit of `10000000`.
+- Keep `pharos-log-pruner` enabled so internal Pharos logs do not grow without bound.
 - Do not commit `.env`, `data/`, snapshots, generated keys, or restored chain data.

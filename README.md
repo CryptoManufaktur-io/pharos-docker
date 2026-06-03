@@ -54,6 +54,8 @@ Key `.env` values:
 | `SNAPSHOT` | empty | Optional initial public DB snapshot |
 | `SNAPSHOT_SHA256` | empty | Optional snapshot archive SHA-256 checksum |
 | `SNAPSHOT_INIT_TIMEOUT` | `300` | Seconds to wait for first boot initialization |
+| `LOG_ROTATION_KEEP` | `10` | Rotated Pharos runtime log files to keep per logger |
+| `LOG_PRUNE_INTERVAL` | `3600` | Seconds between runtime log prune passes |
 | `RPC_PORT` | `18100` | HTTP JSON-RPC |
 | `WS_PORT` | `18200` | WebSocket JSON-RPC |
 | `P2P_PORT` | `19000` | P2P TCP |
@@ -83,9 +85,23 @@ Use the host suffix appropriate for each node, for example `pharos-a` and
 ./pharosd init-logs -f
 ./pharosd version
 ./pharosd check-sync
+./pharosd prune-logs
 ```
 
 `ethd` remains the canonical wrapper. `pharosd` is a symlink to `ethd`.
+
+## Runtime Logs
+
+The Pharos image writes startup output to Docker stdout. High-volume runtime
+logs are written inside the data volume under `${DATA_DIR}/log`.
+
+`pharos-log-pruner` runs alongside the node and removes old rotated runtime log
+files. It keeps active logs plus `LOG_ROTATION_KEEP` rotated files per logger.
+Run a prune immediately with:
+
+```bash
+./pharosd prune-logs
+```
 
 ## Checking Sync
 
