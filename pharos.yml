@@ -6,21 +6,43 @@ x-logging: &logging
       max-file: "3"
       tag: '{{.ImageName}}|{{.Name}}|{{.ImageFullID}}|{{.FullID}}'
 
-name: ${PROJECT_NAME:-pharos}
-
 services:
+  init:
+    restart: "no"
+    build:
+      context: ./init
+      dockerfile: Dockerfile
+      args:
+        - DOCKER_TAG=${NODE_DOCKER_TAG}
+        - DOCKER_REPO=${NODE_DOCKER_REPO}
+    image: init:pharos
+    pull_policy: never
+    environment:
+      SNAPSHOT: "${SNAPSHOT}"
+      GENESIS_URL: "${GENESIS_URL}"
+      VERSION_URL: "${VERSION_URL}"
+      PHAROS_CONF_URL: "${PHAROS_CONF_URL}"
+    entrypoint:
+      - /usr/local/bin/fetch-entrypoint.sh
+    volumes:
+      - data:/data
+      - /etc/localtime:/etc/localtime:ro
+    <<: *logging
+
   pharos:
+    depends_on:
+      init:
+        condition: service_completed_successfully
     image: ${NODE_DOCKER_REPO}:${NODE_DOCKER_TAG}
-    container_name: ${PROJECT_NAME}-pharos
     restart: unless-stopped
     stop_grace_period: 5m
     environment:
-      - CONSENSUS_KEY_PWD=${CONSENSUS_KEY_PWD:?set CONSENSUS_KEY_PWD in .env}
+      - CONSENSUS_KEY_PWD=${CONSENSUS_KEY_PWD:-}
       - PHAROS_CONF=/data/pharos.conf
       - GENESIS_CONF=/data/genesis.conf
       - KEYS_DIR=/data/keys
     volumes:
-      - ${DATA_DIR:-./data}:/data
+      - data:/data
       - /etc/localtime:/etc/localtime:ro
     ports:
       - ${P2P_PORT:-19000}:19000/tcp
@@ -41,14 +63,29 @@ services:
       start_period: 60s
     labels:
       - traefik.enable=true
-      - traefik.http.routers.${RPC_HOST}.entrypoints=websecure
-      - traefik.http.routers.${RPC_HOST}.rule=Host(`${RPC_HOST}.${DOMAIN}`)
-      - traefik.http.routers.${RPC_HOST}.tls.certresolver=letsencrypt
-      - traefik.http.routers.${RPC_HOST}.service=${RPC_LB}
-      - traefik.http.services.${RPC_LB}.loadbalancer.server.port=${RPC_PORT:-18100}
-      - traefik.http.routers.${WS_HOST}.entrypoints=websecure
-      - traefik.http.routers.${WS_HOST}.rule=Host(`${WS_HOST}.${DOMAIN}`)
-      - traefik.http.routers.${WS_HOST}.tls.certresolver=letsencrypt
-      - traefik.http.routers.${WS_HOST}.service=${WS_LB}
-      - traefik.http.services.${WS_LB}.loadbalancer.server.port=${WS_PORT:-18200}
+
+      # rpc
+      - traefik.http.routers.${RPC_HOST:-pharos}.service=${RPC_HOST:-pharos}
+      - traefik.http.routers.${RPC_HOST:-pharos}.entrypoints=websecure
+      - traefik.http.routers.${RPC_HOST:-pharos}.rule=Host(`${RPC_HOST:-pharos}.${DOMAIN}`)
+      - traefik.http.routers.${RPC_HOST:-pharos}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${RPC_HOST:-pharos}lb.service=${RPC_HOST:-pharos}
+      - traefik.http.routers.${RPC_HOST:-pharos}lb.entrypoints=websecure
+      - traefik.http.routers.${RPC_HOST:-pharos}lb.rule=Host(`${RPC_LB:-pharos-lb}.${DOMAIN}`)
+      - traefik.http.routers.${RPC_HOST:-pharos}lb.tls.certresolver=letsencrypt
+      - traefik.http.services.${RPC_HOST:-pharos}.loadbalancer.server.port=${RPC_PORT:-18100}
+
+      # websocket
+      - traefik.http.routers.${WS_HOST:-pharosws}.service=${WS_HOST:-pharosws}
+      - traefik.http.routers.${WS_HOST:-pharosws}.entrypoints=websecure
+      - traefik.http.routers.${WS_HOST:-pharosws}.rule=Host(`${WS_HOST:-pharosws}.${DOMAIN}`)
+      - traefik.http.routers.${WS_HOST:-pharosws}.tls.certresolver=letsencrypt
+      - traefik.http.routers.${WS_HOST:-pharosws}lb.service=${WS_HOST:-pharosws}
+      - traefik.http.routers.${WS_HOST:-pharosws}lb.entrypoints=websecure
+      - traefik.http.routers.${WS_HOST:-pharosws}lb.rule=Host(`${WS_LB:-pharosws-lb}.${DOMAIN}`)
+      - traefik.http.routers.${WS_HOST:-pharosws}lb.tls.certresolver=letsencrypt
+      - traefik.http.services.${WS_HOST:-pharosws}.loadbalancer.server.port=${WS_PORT:-18200}
     <<: *logging
+
+volumes:
+  data: {}

@@ -50,7 +50,6 @@ Key `.env` values:
 | --- | --- | --- |
 | `NODE_DOCKER_REPO` | `public.ecr.aws/k2g7b7g1/pharos` | Official image repository |
 | `NODE_DOCKER_TAG` | `pharos_community_v0.12.2_f301031a_0422` | Pinned image tag |
-| `DATA_DIR` | `./data` | Persistent node data |
 | `RPC_PORT` | `18100` | HTTP JSON-RPC |
 | `WS_PORT` | `18200` | WebSocket JSON-RPC |
 | `P2P_PORT` | `19000` | P2P TCP |

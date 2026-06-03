@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ! -f /data/.initialized ]]; then
+    mkdir -p /data/bin
+
+    # Mainnet genesis and version
+    wget -O /data/genesis.conf "${GENESIS_URL}"
+    wget -O /data/bin/VERSION "${VERSION_URL}"
+
+    # Archive/full node config (pruning disabled by default)
+    wget -O /data/pharos.conf "${PHAROS_CONF_URL}"
+
+    # Bootstrap the node
+    pharos_cli genesis -c "$PHAROS_CONF" -g "$GENESIS_CONF"
+
+    # Download snapshot
+    mkdir -p /data/snapshot
+    cd /data/snapshot
+    aria2c -c -x6 -s6 --auto-file-renaming=false --conditional-get=true --allow-overwrite=true -o snapshot.tar.gz "${SNAPSHOT}"
+
+    # Extract
+    tar -zxvf snapshot.tar.gz
+    mv /data/data/public /data/data/public_bak
+    mv public/ /data/data
+    echo "Initialize complete"
+else
+    echo "No need to initialize"
+fi
