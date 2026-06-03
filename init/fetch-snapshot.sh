@@ -15,7 +15,7 @@ if [[ ! -f /data/.initialized ]]; then
     rm -rf /data/bin
     cp -r /app/bin /data/bin
     chmod +x /data/bin/*
-    /data/bin/pharos_cli genesis -c /data/pharos.conf -g /data/genesis.conf
+    LD_PRELOAD=/data/bin/libevmone.so CONSENSUS_KEY_PWD="$CONSENSUS_KEY_PWD" PORTAL_SSL_PWD="$PORTAL_SSL_PWD" /data/bin/pharos_cli genesis -c /data/pharos.conf -g /data/genesis.conf
 
     # Download snapshot
     mkdir -p /data/snapshot
