@@ -23,7 +23,7 @@ services:
       VERSION_URL: "${VERSION_URL}"
       PHAROS_CONF_URL: "${PHAROS_CONF_URL}"
       CONSENSUS_KEY_PWD: "${CONSENSUS_KEY_PWD}"
-      PORTAL_SSL_PWD: "${PORTAL_SSL_PWD:-}"
+      PORTAL_SSL_PWD: "${CONSENSUS_KEY_PWD}"
     entrypoint:
       - /usr/local/bin/fetch-snapshot.sh
     volumes:
