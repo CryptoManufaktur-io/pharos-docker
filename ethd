@@ -307,7 +307,7 @@ __bootstrap_snapshot_if_needed() {
   __get_value_with_default "PROJECT_NAME" "__snapshot_init_container"
   __snapshot_init_container="${__snapshot_init_container:-pharos}-snapshot-init"
   echo "Restoring Pharos snapshot with pharos-snapshot-init."
-  __docompose --profile snapshot run --rm --no-deps --name "${__snapshot_init_container}" pharos-snapshot-init
+  __docompose --profile snapshot run --rm --no-deps -T --name "${__snapshot_init_container}" pharos-snapshot-init
   ${__as_owner} rm -f "${__init_marker}"
 }
 
