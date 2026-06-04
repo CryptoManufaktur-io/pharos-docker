@@ -33,11 +33,13 @@ cp default.env .env
 ./pharosd up
 ```
 
-On first startup, `./pharosd` downloads these files if they are missing:
+On first startup, a one-shot `init` service runs automatically before the node;
+the `pharos` service waits for it via `depends_on: service_completed_successfully`.
+The init service stages everything the node needs into the `data` volume, then
+writes a `data/.initialized` marker so later restarts skip the work:
 
-- `data/genesis.conf`
-- `data/bin/VERSION`
-- `data/pharos.conf`
+- `data/genesis.conf`, `data/pharos.conf`, and `data/bin/VERSION`
+- the chain snapshot from `SNAPSHOT`, extracted into `data/data/public`
 
 If `CONSENSUS_KEY_PWD` is blank in `.env`, `./pharosd up` generates a random
 local value and writes it back to `.env`.
@@ -103,16 +105,21 @@ Override endpoints or threshold when needed:
 
 ## Snapshot Restore
 
-The Pharos setup guide notes that the node must initialize first before a
-snapshot can be restored. Confirm `eth_blockNumber` returns a block number, stop
-the container, replace `./data/data/public` with the known-good snapshot
-`public` directory, then start the container again and re-run `check-sync`.
+Snapshot restore is automated by the `init` service and runs on first start
+only. Set `SNAPSHOT` in `.env` to the snapshot archive URL before `./pharosd up`.
+The init service downloads it (resumable, via `aria2c`), extracts it, and moves
+the `public` directory into `data/data/public`. The `data/.initialized` marker
+then prevents re-downloading on subsequent restarts.
 
-For BCE-10126 testing, the known-good snapshot was:
+`default.env` ships the current mainnet snapshot URL, for example:
 
 ```text
-mainnet-snapshot-2026-04-28-06.tar.gz
+SNAPSHOT=https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-06-01-03.tar.gz
 ```
+
+To restore from a newer snapshot later, update `SNAPSHOT`, remove the
+`data/.initialized` marker and the stale `data/data/public` directory inside the
+`data` volume, then run `./pharosd up` again so `init` re-runs.
 
 ## Verification
 

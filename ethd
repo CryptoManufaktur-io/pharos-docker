@@ -1032,6 +1032,24 @@ cmd() {
 }
 
 
+check_sync() {
+  local __has_target=0
+  local __arg
+  for __arg in "$@"; do
+    case "${__arg}" in
+      --container|--compose-service|--local-rpc)
+        __has_target=1
+        ;;
+    esac
+  done
+  if [ "${__has_target}" -eq 1 ]; then
+    ./scripts/check_sync.sh "$@"
+  else
+    ./scripts/check_sync.sh --compose-service "${__sample_service}" "$@"
+  fi
+}
+
+
 terminate() {
   # Assume project name and volume are delimited by _ and there is no _ in the volume name. Done to avoid catching project-2 while looking at project
   if [ -z "$(__dodocker volume ls -q -f "name=^$(basename "$(realpath .)" | tr '[:upper:]' '[:lower:]')_[^_]+$")" ]; then
@@ -1131,6 +1149,8 @@ __full_help() {
   echo "    shows logs"
   echo "  cmd <command>"
   echo "    executes an arbitrary Docker Compose command. Use \"cmd help\" to list them"
+  echo "  check-sync"
+  echo "    checks node sync status against a reference RPC. Pass check-sync --help for options"
   echo "  terminate"
   echo "    stops the ${__app_name} and destroys all data stores"
   echo "  space"
@@ -1234,6 +1254,8 @@ fi
 case "$__command" in
   help|update|up|start|down|stop|restart|version|logs|cmd|terminate|space)
     $__command "$@";;
+  check-sync)
+    check_sync "$@";;
   *)
     echo "Unrecognized command $__command"
     help
