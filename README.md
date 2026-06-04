@@ -35,11 +35,9 @@ cp default.env .env
 
 On first startup, a one-shot `init` service runs automatically before the node;
 the `pharos` service waits for it via `depends_on: service_completed_successfully`.
-The init service stages everything the node needs into the `data` volume, then
-writes a `data/.initialized` marker so later restarts skip the work:
-
-- `data/genesis.conf`, `data/pharos.conf`, and `data/bin/VERSION`
-- the chain snapshot from `SNAPSHOT`, extracted into `data/data/public`
+The init service stages everything the node needs into the `data` volume and
+performs the full snapshot restore headlessly (see [Snapshot Restore](#snapshot-restore)),
+then writes a `data/.initialized` marker so later restarts skip the work.
 
 If `CONSENSUS_KEY_PWD` is blank in `.env`, `./pharosd up` generates a random
 local value and writes it back to `.env`.
@@ -105,11 +103,29 @@ Override endpoints or threshold when needed:
 
 ## Snapshot Restore
 
-Snapshot restore is automated by the `init` service and runs on first start
-only. Set `SNAPSHOT` in `.env` to the snapshot archive URL before `./pharosd up`.
-The init service downloads it (resumable, via `aria2c`), extracts it, and moves
-the `public` directory into `data/data/public`. The `data/.initialized` marker
-then prevents re-downloading on subsequent restarts.
+Snapshot restore is fully automated by the one-shot `init` service and runs on
+first start only. Set `SNAPSHOT` in `.env` to the snapshot archive URL before
+`./pharosd up`.
+
+The Pharos snapshot archive contains only the `public` chain database, and the
+node must generate its keys and bootstrap its base chain data *before* that
+`public` can be swapped in. The init service does this headlessly, in order:
+
+1. Fetch `genesis.conf`, `pharos.conf`, and `bin/VERSION`.
+2. **Bootstrap**: generate `data/keys` and the base `data/data` chain dirs
+   (`meta_store`, `public`, ...) by running `pharos_cli genesis`, which exits on
+   its own. Marker: `data/.bootstrapped`.
+3. **Snapshot**: download `SNAPSHOT` (resumable, via `aria2c`), extract it, and
+   replace the freshly-bootstrapped `data/data/public` with the snapshot's
+   `public`. Marker: `data/.initialized`.
+
+The `pharos` service then starts and syncs forward from the snapshot height.
+Later restarts short-circuit on `data/.initialized`.
+
+**Safety:** the init service never wipes existing chain data it did not create.
+If `data/data/meta_store` exists without a `data/.bootstrapped` marker (for
+example a node that was provisioned manually), the init service logs a warning
+and skips the restore entirely rather than destroying the node's data.
 
 `default.env` ships the current mainnet snapshot URL, for example:
 
@@ -117,9 +133,10 @@ then prevents re-downloading on subsequent restarts.
 SNAPSHOT=https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-06-01-03.tar.gz
 ```
 
-To restore from a newer snapshot later, update `SNAPSHOT`, remove the
-`data/.initialized` marker and the stale `data/data/public` directory inside the
-`data` volume, then run `./pharosd up` again so `init` re-runs.
+To restore from a newer snapshot later, update `SNAPSHOT`, remove both the
+`data/.initialized` and `data/.bootstrapped` markers and the stale
+`data/data/public` directory inside the `data` volume, then run `./pharosd up`
+again so `init` re-runs.
 
 ## Verification
 
