@@ -22,7 +22,7 @@ if [[ ! -f /data/.initialized ]]; then
         cd /data/snapshot
         aria2c -c -x6 -s6 --auto-file-renaming=false --conditional-get=true --allow-overwrite=true -o snapshot.tar.gz "${SNAPSHOT}"
 
-        # Extract 
+        # Extract
         tar -zxvf snapshot.tar.gz
         rm snapshot.tar.gz
         mkdir -p /data/data
