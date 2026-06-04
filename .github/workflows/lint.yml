@@ -25,6 +25,3 @@ jobs:
 
       - name: Shellcheck check_sync.sh
         run: shellcheck scripts/check_sync.sh
-
-      - name: Shellcheck restore-snapshot.sh
-        run: shellcheck init/restore-snapshot.sh

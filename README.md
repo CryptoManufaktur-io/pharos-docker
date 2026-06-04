@@ -33,11 +33,13 @@ cp default.env .env
 ./pharosd up
 ```
 
-On first startup, `./pharosd` downloads these files if they are missing:
+On first startup, a one-shot `init` service runs automatically before the node;
+the `pharos` service waits for it via `depends_on: service_completed_successfully`.
+The init service stages everything the node needs into the `data` volume, then
+writes a `data/.initialized` marker so later restarts skip the work:
 
-- `data/genesis.conf`
-- `data/bin/VERSION`
-- `data/pharos.conf`
+- `data/genesis.conf`, `data/pharos.conf`, and `data/bin/VERSION`
+- the chain snapshot from `SNAPSHOT`, extracted into `data/data/public`
 
 If `CONSENSUS_KEY_PWD` is blank in `.env`, `./pharosd up` generates a random
 local value and writes it back to `.env`.
@@ -50,10 +52,6 @@ Key `.env` values:
 | --- | --- | --- |
 | `NODE_DOCKER_REPO` | `public.ecr.aws/k2g7b7g1/pharos` | Official image repository |
 | `NODE_DOCKER_TAG` | `pharos_community_v0.12.2_f301031a_0422` | Pinned image tag |
-| `DATA_DIR` | `./data` | Persistent node data |
-| `SNAPSHOT` | empty | Optional initial public DB snapshot |
-| `SNAPSHOT_SHA256` | empty | Optional snapshot archive SHA-256 checksum |
-| `SNAPSHOT_INIT_TIMEOUT` | `300` | Seconds to wait for first boot initialization |
 | `RPC_PORT` | `18100` | HTTP JSON-RPC |
 | `WS_PORT` | `18200` | WebSocket JSON-RPC |
 | `P2P_PORT` | `19000` | P2P TCP |
@@ -80,7 +78,6 @@ Use the host suffix appropriate for each node, for example `pharos-a` and
 ./pharosd up
 ./pharosd down
 ./pharosd logs -f pharos
-./pharosd init-logs -f
 ./pharosd version
 ./pharosd check-sync
 ```
@@ -108,42 +105,21 @@ Override endpoints or threshold when needed:
 
 ## Snapshot Restore
 
-Set `SNAPSHOT` before first start to restore an initial public DB snapshot.
-Leaving `SNAPSHOT=` starts from genesis and disables snapshot restore.
+Snapshot restore is automated by the `init` service and runs on first start
+only. Set `SNAPSHOT` in `.env` to the snapshot archive URL before `./pharosd up`.
+The init service downloads it (resumable, via `aria2c`), extracts it, and moves
+the `public` directory into `data/data/public`. The `data/.initialized` marker
+then prevents re-downloading on subsequent restarts.
 
-Pharos must initialize its data layout before the snapshot can replace
-`${DATA_DIR}/data/public`, so the wrapper does this sequence:
+`default.env` ships the current mainnet snapshot URL, for example:
 
-1. Start `pharos` once.
-2. Wait until `eth_blockNumber` returns a block number.
-3. Stop `pharos`.
-4. Run `pharos-snapshot-init`, which downloads the snapshot with `aria2c`.
-5. Replace `${DATA_DIR}/data/public` and write `${DATA_DIR}/.snapshot-restored`.
-6. Start `pharos` normally.
-
-If `${DATA_DIR}/data/public` already exists without
-`${DATA_DIR}/.snapshot-init-ready`, `./pharosd up` refuses to restore
-automatically. Start from a clean `DATA_DIR` for snapshot restore. Set
-`SNAPSHOT=` to keep existing data and start normally.
-
-Set `SNAPSHOT_SHA256` when a checksum is available. If set, the init container
-verifies the archive before extraction. If the replacement fails, the previous
-`public` directory is moved back before the script exits.
-
-The restore runs in a screen-backed startup path like other snapshot-backed
-`*-docker` repos. Follow progress with:
-
-```bash
-./pharosd init-logs -f
+```text
+SNAPSHOT=https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-06-01-03.tar.gz
 ```
 
-To use the BCE-10126 known-good snapshot:
-
-```bash
-SNAPSHOT=https://snapshot.dplabs-internal.com/mainnet/mainnet-snapshot-2026-04-28-06.tar.gz
-```
-
-To restore again, stop the node and remove `${DATA_DIR}/.snapshot-restored`.
+To restore from a newer snapshot later, update `SNAPSHOT`, remove the
+`data/.initialized` marker and the stale `data/data/public` directory inside the
+`data` volume, then run `./pharosd up` again so `init` re-runs.
 
 ## Verification
 

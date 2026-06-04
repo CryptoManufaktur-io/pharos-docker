@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# =============================================================================
-# PHAROS DOCKER - CLI Script
-# =============================================================================
-
-__project_name="Pharos Docker"
-__app_name="Pharos node"
+__project_name="pharos Docker"
+__app_name="pharos"
 __sample_service="pharos"
 __docker_exe="docker"
 __old_docker=0
+__docker_sudo=""
+__docker_major_version=""
 __compose_exe="docker compose"
 __old_compose=0
 __compose_upgraded=0
@@ -22,320 +20,71 @@ __upgrade_ubuntu="24.04: https://gist.github.com/yorickdowne/94f1e5538007f4c9d3d
 __min_debian=11
 __suggest_debian="12 or 11."
 __upgrade_debian="12: https://gist.github.com/yorickdowne/ec9e2c6f4f8a2ee93193469d285cd54c"
+__non_interactive=0
+__debug=0
+__found=0
+__env_file=.env
+__during_update=0
+__during_migrate=0
+__migrated=0
+__keep_targets=1
+__target_ver=1
+__source_ver=1
+__handler_ran=0
+__command=""
+__params=""
+__me=./ethd
+__auto_sudo=""
+__cannot_sudo=0
+__as_owner=""
+__owner=""
+__value=""  # This is a global to hand a result back from __get_value_from_env
+__free_space=0
+__docker_dir="/var/lib/docker"
 
-# =============================================================================
-# PROTOCOL-SPECIFIC FUNCTIONS (customize these for your protocol)
-# =============================================================================
+
+# Also adjust version() and __prep_conffiles for your chain, look for the word "Adjust" below
+# If you are using an init container, adjust start()
 
 version() {
-# Script version from README
+# script version
   grep "^This is" README.md
   echo
-  local __repo
-  local __tag
-  local __cid
-  local __version
-
-  __get_value_from_env "NODE_DOCKER_REPO" "${__env_file}" "__repo"
-  __get_value_from_env "NODE_DOCKER_TAG" "${__env_file}" "__tag"
-
-  if [ -n "${__repo}" ] && [ -n "${__tag}" ]; then
-    echo "Configured image: ${__repo}:${__tag}"
-  fi
-
-  __cid="$(__docompose ps -q pharos 2>/dev/null | head -n 1 || true)"
-  if [ -z "${__cid}" ]; then
-    echo "Pharos container is not running."
-    return 0
-  fi
-
-  __version="$(__docompose exec -T pharos sh -c 'cat /data/bin/VERSION 2>/dev/null || true')"
-  if [ -n "${__version}" ]; then
-    echo "Pharos version metadata:"
-    echo "${__version}"
-  else
-    echo "Pharos version metadata not found at /data/bin/VERSION."
-  fi
+  __var="COMPOSE_FILE"
+  __get_value_from_env "${__var}" "${__env_file}" "__value"
+# Client versions
+# Adjust for your clients and how to check their version
+# Multiple clients are in multiple case statements. Mutually exclusive clients are in one case statement
+# Avoid the use of ;;&
+  case "${__value}" in
+    *pharos.yml* )
+      __docompose exec x-geth x-geth version
+      ;;
+  esac
 }
 
 
 __prep_conffiles() {
-  case "${__command:-}" in
-    up|start|run|restart|compose_up|update|upgrade) ;;
-    *) return 0 ;;
-  esac
-
-  if [ ! -f "${__env_file}" ]; then
-    return 0
-  fi
-
-  local __genesis_url
-  local __version_url
-  local __pharos_conf_url
-  local __data_dir
-
-  __get_value_with_default "GENESIS_URL" "__genesis_url"
-  __get_value_with_default "VERSION_URL" "__version_url"
-  __get_value_with_default "PHAROS_CONF_URL" "__pharos_conf_url"
-  __get_data_dir "__data_dir"
-
-  ${__as_owner} mkdir -p "${__data_dir}/bin" "${__data_dir}/keys"
-  __fetch_conffile "${__genesis_url}" "${__data_dir}/genesis.conf"
-  __fetch_conffile "${__version_url}" "${__data_dir}/bin/VERSION"
-  __fetch_conffile "${__pharos_conf_url}" "${__data_dir}/pharos.conf"
-  __ensure_consensus_password
-}
-
-
-__get_value_with_default() {
-  local __var_name="$1"
-  local __output_var="$2"
-  local __value
-
-  __get_value_from_env "${__var_name}" "${__env_file}" "__value"
-  if [ -z "${__value}" ]; then
-    __get_value_from_env "${__var_name}" "default.env" "__value"
-  fi
-  printf -v "${__output_var}" '%s' "${__value}"
-}
-
-
-__get_value_with_default_preserve_empty() {
-  local __var_name="$1"
-  local __output_var="$2"
-  local __value
-
-  __get_value_from_env "${__var_name}" "${__env_file}" "__value"
-  if [ "${__found}" -eq 0 ]; then
-    __get_value_from_env "${__var_name}" "default.env" "__value"
-  fi
-  printf -v "${__output_var}" '%s' "${__value}"
-}
-
-
-__get_data_dir() {
-  local __output_var="$1"
-  local __resolved_data_dir
-
-  __get_value_with_default "DATA_DIR" "__resolved_data_dir"
-  printf -v "${__output_var}" '%s' "${__resolved_data_dir:-./data}"
-}
-
-
-__fetch_conffile() {
-  local __url="$1"
-  local __dest="$2"
-  local __tmp
-
-  if [ -s "${__dest}" ]; then
-    return 0
-  fi
-
-  if [ -z "${__url}" ]; then
-    echo "Missing URL for ${__dest}."
-    exit 1
-  fi
-
-  __tmp="$(mktemp "${__dest}.tmp.XXXXXX")"
-  echo "Fetching ${__dest}"
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL -o "${__tmp}" "${__url}"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q -O "${__tmp}" "${__url}"
-  else
-    echo "curl or wget is required to fetch ${__dest}."
-    rm -f "${__tmp}"
-    exit 1
-  fi
-  ${__as_owner} mv "${__tmp}" "${__dest}"
-}
-
-
-__ensure_consensus_password() {
-  local __pwd
-  local __tmp
-
-  __get_value_from_env "CONSENSUS_KEY_PWD" "${__env_file}" "__pwd"
-  if [ -n "${__pwd}" ]; then
-    return 0
-  fi
-
-  __pwd="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
-  __tmp="$(mktemp "${__env_file}.tmp.XXXXXX")"
-  awk -v pwd="${__pwd}" '
-    BEGIN { done = 0 }
-    /^[[:space:]]*CONSENSUS_KEY_PWD=/ {
-      print "CONSENSUS_KEY_PWD=" pwd
-      done = 1
-      next
-    }
-    { print }
-    END {
-      if (done == 0) {
-        print "CONSENSUS_KEY_PWD=" pwd
-      }
-    }
-  ' "${__env_file}" > "${__tmp}"
-  ${__as_owner} mv "${__tmp}" "${__env_file}"
-  echo "Generated CONSENSUS_KEY_PWD in ${__env_file}."
-}
-
-
-__snapshot_url() {
-  local __snapshot
-
-  __get_value_with_default_preserve_empty "SNAPSHOT" "__snapshot"
-  printf '%s' "${__snapshot}"
-}
-
-
-__snapshot_marker() {
-  local __data_dir
-
-  __get_data_dir "__data_dir"
-  printf '%s/.snapshot-restored' "${__data_dir}"
-}
-
-
-__snapshot_init_marker() {
-  local __data_dir
-
-  __get_data_dir "__data_dir"
-  printf '%s/.snapshot-init-ready' "${__data_dir}"
-}
-
-
-__pharos_public_dir() {
-  local __data_dir
-
-  __get_data_dir "__data_dir"
-  printf '%s/data/public' "${__data_dir}"
-}
-
-
-__snapshot_restored() {
-  local __marker
-
-  __marker="$(__snapshot_marker)"
-  [ -f "${__marker}" ]
-}
-
-
-__pharos_container_running() {
-  local __cid
-
-  __cid="$(__docompose ps -q pharos 2>/dev/null | head -n 1 || true)"
-  [ -n "${__cid}" ] || return 1
-  [ "$(__dodocker inspect -f '{{.State.Running}}' "${__cid}" 2>/dev/null || true)" = "true" ]
-}
-
-
-__wait_for_pharos_init() {
-  local __timeout
-  local __start_time
-  local __cid
-
-  __get_value_with_default "SNAPSHOT_INIT_TIMEOUT" "__timeout"
-  if ! [[ "${__timeout}" =~ ^[0-9]+$ ]]; then
-    echo "SNAPSHOT_INIT_TIMEOUT must be a non-negative integer."
-    exit 1
-  fi
-
-  __start_time="$(date +%s)"
-  echo "Waiting up to ${__timeout}s for Pharos to initialize and answer eth_blockNumber"
-
-  while true; do
-    __cid="$(__docompose ps -q pharos 2>/dev/null | head -n 1 || true)"
-    if [ -n "${__cid}" ] \
-        && __dodocker exec "${__cid}" sh -c 'curl -fsS -H "Content-Type: application/json" --data "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_blockNumber\",\"params\":[]}" http://127.0.0.1:18100 | grep -Eq "\"result\":\"0x[0-9a-fA-F]+\""' >/dev/null 2>&1; then
-      echo "Pharos initialization RPC is ready."
-      return 0
-    fi
-
-    if [ $(( "$(date +%s)" - __start_time )) -ge "${__timeout}" ]; then
-      echo "Timed out waiting for Pharos initialization RPC."
-      echo "Check logs with: ${__me} logs -f pharos"
-      exit 1
-    fi
-
-    sleep 5
-  done
-}
-
-
-__bootstrap_snapshot_if_needed() {
-  local __snapshot
-  local __marker
-  local __init_marker
-  local __public_dir
-  local __snapshot_init_container
-
-  __snapshot="$(__snapshot_url)"
-  if [ -z "${__snapshot}" ]; then
-    return 0
-  fi
-
-  __marker="$(__snapshot_marker)"
-  __init_marker="$(__snapshot_init_marker)"
-  __public_dir="$(__pharos_public_dir)"
-
-  if __snapshot_restored; then
-    echo "Snapshot already restored. Remove ${__marker} to restore again."
-    return 0
-  fi
-
-  if [ -d "${__public_dir}" ] && [ ! -f "${__init_marker}" ]; then
-    echo "Refusing automatic snapshot restore because ${__public_dir} already exists."
-    echo "To restore from snapshot, start from a clean DATA_DIR."
-    echo "To keep existing data and start normally, set SNAPSHOT= in ${__env_file}."
-    exit 1
-  fi
-
-  if [ ! -f "${__init_marker}" ]; then
-    echo "SNAPSHOT is set. Starting Pharos once to initialize the data directory."
-    __docompose up -d --remove-orphans pharos
-    __wait_for_pharos_init
-    ${__as_owner} touch "${__init_marker}"
-  elif __pharos_container_running; then
-    echo "Stopping Pharos before snapshot restore."
-  fi
-
-  if __pharos_container_running; then
-    __docompose stop pharos
-  fi
-
-  __get_value_with_default "PROJECT_NAME" "__snapshot_init_container"
-  __snapshot_init_container="${__snapshot_init_container:-pharos}-snapshot-init"
-  echo "Restoring Pharos snapshot with pharos-snapshot-init."
-  __docompose --profile snapshot run --rm --no-deps -T --name "${__snapshot_init_container}" pharos-snapshot-init
-  ${__as_owner} rm -f "${__init_marker}"
-}
-
-
-compose_up() {
-  __bootstrap_snapshot_if_needed
-  __docompose up -d --remove-orphans "$@"
+  # Adjust - this is where sample files would be copied to config files that are meant to be bind-mounted
+  return
 }
 
 
 start() {
-  local __screen_id
-  local __screen_log
-
   if ! type -P screen >/dev/null 2>&1; then
     ${__auto_sudo} apt-get update && ${__auto_sudo} apt-get install -y screen
   fi
+  __var="NETWORK"
+  __get_value_from_env "${__var}" "${__env_file}" "__screen_id"
+# shellcheck disable=SC2154
+  rm -f "/tmp/${__screen_id}-compose-screen.log"
 
-  __get_value_with_default "PROJECT_NAME" "__screen_id"
-  __screen_id="${__screen_id:-pharos}"
-  __screen_log="/tmp/${__screen_id}-compose-screen.log"
-  rm -f "${__screen_log}"
-
-  screen -dmS "${__screen_id}-compose-session" -L -Logfile "${__screen_log}" "${BASH_SOURCE[0]}" compose_up "$@"
-  echo "Running \"docker compose up -d\" in screen because of the snapshot init container."
+# shellcheck disable=SC2086
+  screen -dmS "${__screen_id}-compose-session" -L -Logfile "/tmp/${__screen_id}-compose-screen.log" ${__compose_exe} up -d --remove-orphans "$@"
+  echo "Running \"docker compose up -d\" in screen because of the init container."
   echo
   echo "If this is your first start and you are getting a SNAPSHOT, you can view the init logs:"
-  echo "\"${__me} init-logs -f\""
+  echo "\"${__me} logs -f init\""
   echo
   echo "You can attach to the screen session with \"screen -r ${__screen_id}-compose-session\""
   echo
@@ -343,27 +92,16 @@ start() {
   sleep 5
   echo
   echo "Here's the output of docker compose so far:"
-  if [ -f "${__screen_log}" ]; then
-    cat "${__screen_log}"
-  else
-    echo "No screen output yet."
-  fi
+  cat "/tmp/${__screen_id}-compose-screen.log"
   echo
 }
 
-
-# =============================================================================
-# ENV MIGRATION
-# =============================================================================
 
 __env_migrate() {
   if [ ! -f "${__env_file}" ]; then
     return 0
   fi
 
-# Define old->new variable name mappings for migration
-# Example: __old_vars=( OLD_VAR_NAME )
-#          __new_vars=( NEW_VAR_NAME )
   __old_vars=( )
   __new_vars=( )
 
@@ -381,7 +119,7 @@ __env_migrate() {
       if [[ "${__line}" =~ ^([A-Za-z0-9_-]+)= ]]; then
         __varname="${BASH_REMATCH[1]}"
         if [[ "${__varname}" = *-* ]]; then
-          echo "Error: Variable '${__varname}' contains a dash and would not be usable in Bash."
+          echo "❌ Error: Variable '${__varname}' contains a dash and would not be usable in Bash."
           (( ++__error ))
         fi
         if [[ "${__varname}" = "ENV_VERSION" ]]; then
@@ -449,10 +187,6 @@ __env_migrate() {
 }
 
 
-# =============================================================================
-# DOCKER WRAPPERS
-# =============================================================================
-
 __dodocker() {
   $__docker_sudo $__docker_exe "$@"
 }
@@ -465,168 +199,213 @@ __docompose() {
 }
 
 
-# =============================================================================
-# ENV FILE PARSING (awk-based)
-# =============================================================================
-
 __get_value_from_env() {
-  # Call with variable name to read, env file name, and global variable to assign the value to
+  # Call with variable name to read, env file name, and global variable to assign the __value to
   # Also sets global __found
-  local __var_name="$1"
-  local __env_file="$2"
-  local __output_var="$3"
-  local __output
-  local __parsed_value
+  local var_name="$1"
+  local env_file="$2"
+  local output_var="$3"
+  local output
+  local parsed_value
+  local awk_exe
 
-  if [[ "${__output_var}" = "__parsed_value" || "${__output_var}" = "__output_var" \
-      || "${__output_var}" = "__output" || "${__output_var}" = "__env_file" \
-      || "${__output_var}" = "__var_name" ]]; then
-    echo "__get_value_from_env was called with a conflicting output variable: $__output_var"
+  if [[ "${output_var}" = "parsed_value" || "${output_var}" = "output_var" \
+      || "${output_var}" = "output" || "${output_var}" = "env_file" \
+      || "${output_var}" = "var_name" ]]; then
+    echo "__get_value_from_env was called with a conflicting output variable: ${output_var}"
     echo "This is a bug."
     exit 70
   fi
 
-  __output=$(awk -v var="$__var_name" '
+  if [[ "$OSTYPE" = "darwin"* ]]; then
+    awk_exe="gawk"  # Built-in awk can't handle multi-line. Does require brew install gawk
+  else
+    awk_exe="awk"
+  fi
+
+#shellcheck disable=SC2016
+  output=$(${awk_exe} -v var="${var_name}" '
     BEGIN { __found = 0; __value = "" }
 
     # Skip empty lines and comments
-    /^#|^\s*$/ {
+    /^[[:space:]]*($|#)/ {
       next
     }
 
-    # Match single-line unquoted value
-    $0 ~ "^[ \t]*"var"=[^\"].*$" {
-      gsub("^[ \t]*"var"=", "")
+    # Match single-line unquoted __value
+    $0 ~ "^[ \t]*" var "=" && $0 !~ "^[ \t]*" var "=[ \t]*[\"'\'']" {
+      sub("^[ \t]*"var"=", "")
       gsub(/^[ \t]*|[ \t]*$/, "", $0)
       __value = $0
       __found = 1
       exit
     }
 
-    # Match empty unquoted value
+    # Match empty unquoted __value
     $0 ~ "^[ \t]*"var"=$" {
-       __value = ""
-       __found = 1
-       exit
+      __value = ""
+      __found = 1
+      exit
     }
 
-    # Match a quoted single-line value
-    $0 ~ "^[ \t]*"var"=\"[^\"]*\"[ \t]*$" {
-      gsub("^[ \t]*"var"=\"", "")
-      gsub(/"[ \t]*$/, "", $0)
+    # Single-line DOUBLE-quoted: VAR="..."; allow trailing spaces
+    $0 ~ "^[ \t]*" var "=\"[^\"]*\"[ \t]*$" {
+      sub("^[ \t]*" var "=\"", "", $0)
+      sub(/"[ \t]*$/, "", $0)
       __value = "\"" $0 "\""
       __found = 1
       exit
     }
 
-    # Match the start of a multi-line value (with opening quote)
-    $0 ~ "^[ \t]*"var"=\"[^\"]*$" {
-      gsub("^[ \t]*"var"=\"", "")
-      __value = "\"" $0 "\n"
+    # Single-line SINGLE-quoted: VAR='\''...'\''; allow trailing spaces
+    $0 ~ "^[ \t]*" var "='\''[^'\'']*'\''[ \t]*$" {
+      sub("^[ \t]*" var "='\''", "", $0)
+      sub(/'\''[ \t]*$/, "", $0)
+      __value = "'"'"'" $0 "'"'"'"
+      __found = 1
+      exit
+    }
+
+    # Match the start of a multi-line __value (with opening double or single quote)
+    $0 ~ "^[ \t]*"var"=\"[^\"]*$" || $0 ~ "^[ \t]*" var "='\''[^'\'']*$" {
+      # Pick which quote we matched and strip the var=<quote> prefix
+      if ($0 ~ "^[ \t]*" var "=\"[^\"]*$") {
+        __q="\""; sub("^[ \t]*" var "=\"", "", $0)
+      } else {
+        __q="'\''";  sub("^[ \t]*" var "='\''", "", $0)
+      }
+      # Accumulator starts with the opening quote, plus first chunk + newline
+      __value = __q $0 "\n"
       __found = 1
       next
     }
 
-    # Continue collecting lines for a multi-line value
-    __found && !/"[ \t]*$/ {
+    # Continue collecting lines for a multi-line __value
+    __found && ($0 !~ (__q=="\"" ? "\"[ \t]*$" : "'\''[ \t]*$")) {
       __value = __value $0 "\n"
       next
     }
 
-    # End of a multi-line value (with closing quote)
-    __found && /"[ \t]*$/ {
-      gsub(/[ \t]*"[ \t]*$/, "")
-      __value = __value $0 "\""
+    # End of a multi-line __value (with closing quote)
+    __found && ($0 ~ (__q=="\"" ? "\"[ \t]*$" : "'\''[ \t]*$")) {
+      # Remove the trailing quote + any spaces/tabs around it
+      if (__q == "\"") {
+        sub(/[ \t]*"[ \t]*$/, "", $0)
+      } else {
+        sub(/[ \t]*'\''[ \t]*$/, "", $0)
+      }
+      __value = __value $0 __q
       __found = 1
       exit
     }
 
     END {
       # Print here-doc style so we can parse with awk
-      # Print the value as is, including quotes for multi-line
+      # Print the __value as is, including quotes for multi-line
       print "__value<<EOF"
       print __value
       print "EOF"
       print "__found=" __found
     }
-  ' "$__env_file")
+  ' "${env_file}")
 
   # Parse __value using here-doc style
-  __parsed_value=$(awk '/^__value<<EOF$/ {getline; while ($0 != "EOF") { print; getline } }' <<< "$__output")
+#shellcheck disable=SC2016
+  parsed_value=$(${awk_exe} '/^__value<<EOF$/ {getline; while ($0 != "EOF") { print; getline } }' <<< "${output}")
   # Parse __found directly into a global variable
-  __found=$(awk -F= '/^__found=/ {print $2}' <<< "$__output")
+#shellcheck disable=SC2016
+  __found=$(${awk_exe} -F= '/^__found=/ {print $2}' <<< "${output}")
 
-  # assign value to caller's variable
-  printf -v "$__output_var" '%s' "$__parsed_value"
+  # assign __value to caller’s variable
+  printf -v "${output_var}" '%s' "${parsed_value}"
 }
 
 
 __update_value_in_env() {
-# Call as __update_value_in_env "$__var" "$__value" "$__env_file"
-  local __var_name="$1"
-  local __new_value="$2"
-  local __env_file="$3"
+# Call as __update_value_in_env "${var}" "${value}" "${env_file}"
+  local var_name="$1"
+  local new_value="$2"
+  local env_file="$3"
+  local escaped_value
+  local awk_exe
+
+  if [[ "$OSTYPE" = "darwin"* ]]; then
+    awk_exe="gawk"  # Built-in awk can't handle multi-line. Does require brew install gawk
+  else
+    awk_exe="awk"
+  fi
 
   # Escape backslashes for safety
-  local __escaped_value
-  __escaped_value=$(printf '%s' "${__new_value}" | sed 's/\\/\\\\/g')
+  escaped_value=$(printf '%s' "${new_value}" | sed 's/\\/\\\\/g')
 
   # Check if the variable already exists in the .env file
-  if grep -q "^[ \t]*${__var_name}=" "${__env_file}"; then
+  if grep -q "^[ \t]*${var_name}=" "${env_file}"; then
     # Variable exists, update it
-    awk -v var="${__var_name}" -v new_value="${__escaped_value}" '
-      BEGIN { in_block = 0; multi_line = 0 }
-
-      # Match the line that starts with the variable name
+#shellcheck disable=SC2016
+    ${awk_exe} -v var="${var_name}" -v new_value="${escaped_value}" '
+      BEGIN { in_block = 0; multi_line = 0; __q="" }
+      # Start of the target variable
       $0 ~ "^[ \t]*" var "=" {
-        # If the value starts with a quote, it may be a multi-line
+        # Determine opening quote (if any)
         if ($0 ~ "^[ \t]*" var "=\"") {
-          # Start of multi-line value
-          multi_line = 1
-          # Print the variable name with the new value, replacing & safely
-          gsub(/&/, "\\&", new_value)
-          print var "=" new_value
-        } else {
-          # Single-line value
-          gsub(/&/, "\\&", new_value)
-          print var "=" new_value
+          __q = "\""
+          # If there is NOT a second " later on the line, it is multiline
+          if ($0 !~ "^[ \t]*" var "=\".*\"[ \t]*$")
+            multi_line = 1
+          else
+            multi_line = 0
         }
-        # Set the flag to indicate we are processing the target variable block
+        else if ($0 ~ "^[ \t]*" var "='\''") {
+          __q = "'\''"
+          # If there is NOT a second '\'' later on the line, it is multiline
+          if ($0 !~ "^[ \t]*" var "='\''.*'\''[ \t]*$")
+            multi_line = 1
+          else
+            multi_line = 0
+        }
+        else {
+          __q = ""
+          multi_line = 0
+        }
+
+        # Replace with new value, verbatim (already escaped upstream)
+        gsub(/&/, "\\&", new_value)   # AWK print safety
+        print var "=" new_value
+
         in_block = 1
         next
       }
 
-      # If we encounter a new variable definition, stop skipping lines
-      /^[A-Z_][A-Z0-9_]*=/ && in_block {
-        in_block = 0
-        multi_line = 0
+      # A new variable definition resets skipping
+      /^[ \t]*[A-Z_][A-Z0-9_]*=/ && in_block {
+        in_block=0
+        multi_line=0
+        __q=""
       }
-      # Continue to skip lines in a multi-line block if multi_line is true
-      multi_line && !/"[ \t]*$/ {
+
+      # Skip multiline content until closing quote line
+      multi_line && ( $0 !~ (__q=="\"" ? "\"[ \t]*$" : "'\''[ \t]*$") ) {
         next
       }
 
-      # If we reach the end of a multi-line value, reset flags
-      multi_line && /"[ \t]*$/ {
-        in_block = 0
-        multi_line = 0
+      # Closing line of the multi-line block: consume it and reset
+      multi_line && ( $0 ~ (__q=="\"" ? "\"[ \t]*$" : "'\''[ \t]*$") ) {
+        in_block=0
+        multi_line=0
+        __q=""
         next
       }
 
       # Print all lines if not in the target variable block
       { print }
-    ' "${__env_file}" | ${__as_owner} tee "${__env_file}.tmp" >/dev/null
-    ${__as_owner} mv "${__env_file}.tmp" "${__env_file}"
+    ' "${env_file}" | ${__as_owner} tee "${env_file}.tmp" >/dev/null
+    ${__as_owner} mv "${env_file}.tmp" "${env_file}"
   else
     # Variable does not exist, append it
-    printf "%s=%s\n" "${__var_name}" "${__escaped_value}" | ${__as_owner} tee -a "${__env_file}" >/dev/null
+    printf "%s=%s\n" "${var_name}" "${escaped_value}" | ${__as_owner} tee -a "${env_file}" >/dev/null
   fi
 }
 
-
-# =============================================================================
-# SYSTEM DETECTION
-# =============================================================================
 
 __determine_distro() {
   # Determine OS platform
@@ -712,7 +491,7 @@ __handle_docker() {
 __handle_root() {
   __cannot_sudo=0
   if [ "${EUID}" -eq 0 ]; then
-    __as_owner="sudo -u ${OWNER}"
+    __as_owner="sudo -u ${__owner}"
     __auto_sudo=""
   else
     __as_owner=""
@@ -752,17 +531,13 @@ __check_compose_version() {
         echo "${__project_name} only supports Compose V2."
         echo
         echo "It is recommended that you replace Compose V1 with Compose V2."
-        if [ "${__non_interactive}" -eq 1 ]; then
-          __upgrade_compose
-        else
-          while true; do
-            read -rp "Do you want to update Docker Compose to V2? (yes/no) " __yn
-            case $__yn in
-              [Nn]* ) echo "Please be sure to update Docker Compose yourself!"; break;;
-               * ) __upgrade_compose; break;;
-            esac
-          done
-        fi
+        while true; do
+          read -rp "Do you want to update Docker Compose to V2? (yes/no) " __yn
+          case $__yn in
+            [Nn]* ) echo "Please be sure to update Docker Compose yourself!"; break;;
+             * ) __upgrade_compose; break;;
+          esac
+        done
       else
         true  # Nothing now; maybe in future we'll do the update for the user
       fi
@@ -881,7 +656,7 @@ __install_docker() {
   __groups=$(${__as_owner} groups)
   if [[ ! "${__groups}" =~ "docker" ]]; then
     echo "Making your user part of the docker group"
-    ${__auto_sudo} usermod -aG docker "${OWNER}"
+    ${__auto_sudo} usermod -aG docker "${__owner}"
     echo "Please run newgrp docker or log out and back in"
   else
     echo "Your user is already part of the docker group"
@@ -914,25 +689,17 @@ install() {
   ${__auto_sudo} apt-get install -y ca-certificates curl gnupg chrony pkg-config screen ncdu
 
   echo
-  if [ "${__non_interactive}" -eq 1 ]; then
-    __install_docker
-  else
-    read -rp "Do you want to install Docker and make your user part of the docker group? (no/yes) " __yn
-    case $__yn in
-      [Yy]* ) __install_docker;;
-      * ) ;;
-    esac
-  fi
+  read -rp "Do you want to install Docker and make your user part of the docker group? (no/yes) " __yn
+  case $__yn in
+    [Yy]* ) __install_docker;;
+    * ) ;;
+  esac
 
   if [ -n "$(command -v docker)" ]; then
     __handle_docker
   fi
 }
 
-
-# =============================================================================
-# SPACE UTILITIES
-# =============================================================================
 
 __get_docker_free_space() { # set __free_space to what's available to Docker
   if [[ "$OSTYPE" = "darwin"* ]]; then # macOS doesn't expose docker root dir to the OS
@@ -968,12 +735,13 @@ __display_docker_dir() {
 
 __display_docker_volumes() {
   echo
-  if [ -z "$(__dodocker volume ls -q -f "name=^$(basename "$(realpath .)")_[^_]+")" ]; then
+  # Assume project name and volume are delimited by _ and there is no _ in the volume name. Done to avoid catching project-2 while looking at project
+  if [ -z "$(__dodocker volume ls -q -f "name=^$(basename "$(realpath .)" | tr '[:upper:]' '[:lower:]')_[^_]+$")" ]; then
     echo "There are no Docker volumes for this copy of ${__project_name}"
     echo
   else
     echo "Here are the Docker volumes used by this copy of ${__project_name} and their space usage:"
-    __dodocker system df -v | grep -A 500 "VOLUME NAME" | grep "^$(basename "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")"
+    __dodocker system df -v | grep -A 500 "VOLUME NAME" | grep -iE "^$(basename "$(dirname "$(realpath "${BASH_SOURCE[0]}")")")_[^_]+$"
     echo
   fi
   if command -v ncdu >/dev/null 2>&1; then
@@ -1053,10 +821,6 @@ __pull_and_build() {
 }
 
 
-# =============================================================================
-# UPDATE COMMAND
-# =============================================================================
-
 # Arguments are passed, but shellcheck doesn't recognize that
 # shellcheck disable=SC2120
 update() {
@@ -1076,11 +840,9 @@ update() {
   local __lock_file="${__uniq_id}_lock"
   ${__as_owner} touch "/tmp/${__lock_file}"
   exec 200<"/tmp/${__lock_file}"
-  if command -v flock >/dev/null 2>&1; then
-    if ! flock -n 200; then
-      echo "Another instance of \"${__me} update\" is running. Aborting."
-      exit 1
-    fi
+  if ! flock -n 200; then
+    echo "Another instance of \"${__me} update\" is running. Aborting."
+    exit 1
   fi
 
   __during_update=1
@@ -1228,13 +990,9 @@ reset to defaults."
 
 
 upgrade() {
-  update "$@"
+  update
 }
 
-
-# =============================================================================
-# LIFECYCLE COMMANDS
-# =============================================================================
 
 up() {
   start "$@"
@@ -1269,53 +1027,54 @@ logs() {
 }
 
 
-init_logs() {
-  __docompose logs --tail="${TAIL:-200}" pharos-snapshot-init "$@"
-}
-
-
-check_sync() {
-  ./scripts/check_sync.sh "$@"
-}
-
-
 cmd() {
   __docompose "$@"
 }
 
 
+check_sync() {
+  local __has_target=0
+  local __arg
+  for __arg in "$@"; do
+    case "${__arg}" in
+      --container|--compose-service|--local-rpc)
+        __has_target=1
+        ;;
+    esac
+  done
+  if [ "${__has_target}" -eq 1 ]; then
+    ./scripts/check_sync.sh "$@"
+  else
+    ./scripts/check_sync.sh --compose-service "${__sample_service}" "$@"
+  fi
+}
+
+
 terminate() {
-  if [ -z "$(__dodocker volume ls -q -f "name=^$(basename "$(realpath .)")_.+")" ]; then
+  # Assume project name and volume are delimited by _ and there is no _ in the volume name. Done to avoid catching project-2 while looking at project
+  if [ -z "$(__dodocker volume ls -q -f "name=^$(basename "$(realpath .)" | tr '[:upper:]' '[:lower:]')_[^_]+$")" ]; then
     echo "There are no data stores - Docker volumes - left to remove for this ${__app_name}."
     stop
     exit 0
   fi
 
-  if [ "${__non_interactive}" -eq 1 ]; then
-    echo "WARNING - non-interactive mode: destroying all data stores for this ${__app_name}."
-  else
-    while true; do
-      read -rp "WARNING - this action will destroy all data stores for this ${__app_name}. Do you wish to continue? (No/Yes) " __yn
-      case $__yn in
-        [Yy]es ) break;;
-        * ) echo "Aborting, no changes made"; exit 130;;
-      esac
-    done
-  fi
+  while true; do
+    read -rp "WARNING - this action will destroy all data stores for this ${__app_name}. Do you wish to continue? (No/Yes) " __yn
+    case $__yn in
+      [Yy]es ) break;;
+      * ) echo "Aborting, no changes made"; exit 130;;
+    esac
+  done
 
   down
 # In this case I want the word splitting, so rm can remove all volumes
 # shellcheck disable=SC2046
-  __dodocker volume rm $(__dodocker volume ls -q -f "name=^$(basename "$(realpath .)")_.+")
+  __dodocker volume rm $(__dodocker volume ls -q -f "name=^$(basename "$(realpath .)" | tr '[:upper:]' '[:lower:]')_[^_]+$")
   echo
   echo "All containers stopped and all volumes deleted"
   echo
 }
 
-
-# =============================================================================
-# ERROR HANDLING
-# =============================================================================
 
 __handle_error() {
   if [[ ! $- =~ e ]]; then
@@ -1353,10 +1112,6 @@ __handle_error() {
 }
 
 
-# =============================================================================
-# HELP
-# =============================================================================
-
 __update_help() {
   echo "usage: $__me update [--refresh-targets] [--non-interactive] [--debug] [--trace]"
   echo
@@ -1392,12 +1147,10 @@ __full_help() {
   echo "    prints the version(s) of currently running client(s)"
   echo "  logs"
   echo "    shows logs"
-  echo "  init-logs"
-  echo "    shows snapshot/init logs"
-  echo "  check-sync"
-  echo "    compare local node status to a public RPC to verify sync"
   echo "  cmd <command>"
   echo "    executes an arbitrary Docker Compose command. Use \"cmd help\" to list them"
+  echo "  check-sync"
+  echo "    checks node sync status against a reference RPC. Pass check-sync --help for options"
   echo "  terminate"
   echo "    stops the ${__app_name} and destroys all data stores"
   echo "  space"
@@ -1423,22 +1176,18 @@ help() {
 }
 
 
-# =============================================================================
-# MAIN
-# =============================================================================
-
+# Main body from here
 __env_file=.env
 __during_update=0
 __during_migrate=0
 __migrated=0
-__non_interactive=0
 __command=""
 __me="./$(basename "${BASH_SOURCE[0]}")"
 
 trap '__handle_error $? $LINENO' ERR
 trap '__handle_error $? $LINENO' EXIT
 
-if [[ "$#" -eq 0 || "$1" = "help" || ( "$1" =~ ^(-h|--help)$ && "${2:-}" != "check-sync" ) || "$*" = "update --help" || "$*" = "update -h" ]]; then
+if [[ "$#" -eq 0 || "$*" = "--help" || "$*" = "-h" || "$*" = "update --help" || "$*" = "update -h" ]]; then
   help "$@"
   exit 0
 fi
@@ -1446,11 +1195,11 @@ fi
 cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")"
 # Use this to make sure root doesn't end up owning files
 # shellcheck disable=SC2012
-OWNER=$(ls -ld . | awk '{print $3}')
+__owner=$(ls -ld . | awk '{print $3}')
 
-if [ "${OWNER}" = "root" ]; then
+if [ "${__owner}" = "root" ]; then
   echo "Please install ${__project_name} as a non-root user."
-  exit 1
+  exit 0
 fi
 
 __command="$1"
@@ -1466,19 +1215,6 @@ __check_for_snap
 if [ "$__command" = "install" ]; then
   $__command "$@"
   exit "$?"
-fi
-
-if [ "$__command" = "check-sync" ]; then
-  trap - ERR EXIT
-  check_sync "$@"
-  exit "$?"
-fi
-
-if [ ! -f ".env" ] && [ "$__command" != "update" ]; then
-  echo "No .env file found. Copy the default configuration:"
-  echo "  cp default.env .env"
-  echo "Then edit .env to customize your deployment."
-  exit 1
 fi
 
 __handle_docker
@@ -1516,14 +1252,13 @@ if ! __docompose --help >/dev/null 2>&1; then
 fi
 
 case "$__command" in
-  help|update|upgrade|run|up|start|compose_up|down|stop|restart|version|logs|cmd|terminate|space)
+  help|update|up|start|down|stop|restart|version|logs|cmd|terminate|space)
     $__command "$@";;
-  init-logs)
-    init_logs "$@";;
+  check-sync)
+    check_sync "$@";;
   *)
     echo "Unrecognized command $__command"
     help
-    exit 1
     ;;
 esac
 
