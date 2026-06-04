@@ -24,11 +24,21 @@ services:
       PHAROS_CONF_URL: "${PHAROS_CONF_URL}"
       CONSENSUS_KEY_PWD: "${CONSENSUS_KEY_PWD}"
       PORTAL_SSL_PWD: "${CONSENSUS_KEY_PWD}"
+      # The init container runs the node once to bootstrap keys + base chain
+      # data before swapping in the snapshot, so it needs the same config the
+      # node entrypoint expects.
+      PHAROS_CONF: /data/pharos.conf
+      GENESIS_CONF: /data/genesis.conf
+      KEYS_DIR: /data/keys
     entrypoint:
       - /usr/local/bin/fetch-snapshot.sh
     volumes:
       - data:/data
       - /etc/localtime:/etc/localtime:ro
+    ulimits:
+      nofile:
+        soft: 10000000
+        hard: 10000000
     <<: *logging
 
   pharos:
